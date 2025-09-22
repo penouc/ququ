@@ -11,6 +11,7 @@ import { usePermissions } from "./hooks/usePermissions";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { Mic, MicOff, Settings, History, Copy, Download } from "lucide-react";
 import SettingsPanel from "./components/SettingsPanel";
+import { ModelDownloadProgress } from "./components/ui/model-status-indicator";
 
 // 动态导入设置页面组件
 const SettingsPage = React.lazy(() => import('./settings.jsx').then(module => ({ default: module.SettingsPage })));
@@ -382,17 +383,49 @@ export default function App() {
     }
   };
 
+  // 处理模型下载
+  const handleDownloadModels = useCallback(async () => {
+    try {
+      // 显示开始下载的提示
+      toast.info("📥 开始下载模型文件...");
+      
+      const result = await modelStatus.downloadModels();
+      if (result.success) {
+        toast.success("🎉 模型下载完成，正在加载...");
+      } else {
+        toast.error(`❌ 模型下载失败: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('下载模型失败:', error);
+      toast.error(`❌ 模型下载失败: ${error.message}`);
+    }
+  }, [modelStatus]);
+
   // 切换录音状态
   const toggleRecording = useCallback(() => {
-    // 检查FunASR是否就绪
+    // 检查模型状态
+    if (modelStatus.stage === 'need_download') {
+      toast.warning("📥 请先下载AI模型文件");
+      return;
+    }
+    
+    if (modelStatus.stage === 'downloading') {
+      toast.warning("⬇️ 模型正在下载中，请稍候...");
+      return;
+    }
+    
+    if (modelStatus.stage === 'loading') {
+      toast.warning("🤖 模型正在加载中，请稍候...");
+      return;
+    }
+    
+    if (modelStatus.stage === 'error') {
+      toast.error(`❌ 模型错误: ${modelStatus.error}`);
+      return;
+    }
+    
     if (!modelStatus.isReady) {
-      if (modelStatus.isLoading) {
-        toast.warning("🤖 FunASR服务器正在启动中，请稍候...");
-      } else if (modelStatus.error) {
-        toast.error("❌ FunASR服务器未就绪，请检查配置");
-      } else {
-        toast.warning("⏳ 正在准备FunASR服务器，请稍候...");
-      }
+      toast.warning("⏳ 模型未就绪，请稍候...");
       return;
     }
 
@@ -401,7 +434,7 @@ export default function App() {
     } else if (isRecording) {
       stopRecording();
     }
-  }, [modelStatus.isReady, modelStatus.isLoading, modelStatus.error, isRecording, isRecordingProcessing, startRecording, stopRecording]);
+  }, [modelStatus, isRecording, isRecordingProcessing, startRecording, stopRecording]);
 
   // 使用热键Hook，不再使用F2双击功能
   const { hotkey, syncRecordingState, registerHotkey, unregisterHotkey } = useHotkey();
@@ -1071,11 +1104,15 @@ export default function App() {
     // 统一的按钮样式，不再根据状态变色
     const buttonStyle = `${baseClasses} bg-gradient-to-br from-slate-100 to-slate-200 dark:from-gray-700 dark:to-gray-600 hover:from-slate-200 hover:to-slate-300 dark:hover:from-gray-600 dark:hover:to-gray-500 hover:shadow-2xl transform hover:scale-105`;
 
-    // 如果FunASR未就绪，显示禁用状态
+    // 如果模型未就绪，显示禁用状态（统一的灰色）
     if (!modelStatus.isReady) {
       return {
         className: `${baseClasses} bg-gradient-to-br from-gray-300 to-gray-400 dark:from-gray-600 dark:to-gray-700 cursor-not-allowed opacity-70`,
-        tooltip: "FunASR服务器启动中，请稍候...",
+        tooltip: modelStatus.stage === 'need_download' ? "请先下载AI模型文件" :
+                 modelStatus.stage === 'downloading' ? `模型下载中... ${modelStatus.downloadProgress || 0}%` :
+                 modelStatus.stage === 'loading' ? "模型加载中，请稍候..." :
+                 modelStatus.stage === 'error' ? `模型错误: ${modelStatus.error}` :
+                 "模型未就绪，请稍候...",
         disabled: true
       };
     }
@@ -1175,7 +1212,9 @@ export default function App() {
               disabled={micProps.disabled}
             >
               {/* 动态内容基于状态 */}
-              {!modelStatus.isReady ? (
+              {modelStatus.stage === 'downloading' ? (
+                <LoadingIndicator size={20} />
+              ) : modelStatus.stage === 'loading' || !modelStatus.isReady ? (
                 <LoadingIndicator size={20} />
               ) : micState === "idle" ? (
                 <SoundWaveIcon size={20} isActive={false} />
@@ -1194,8 +1233,16 @@ export default function App() {
           </Tooltip>
           
           <p className="mt-4 status-text text-gray-700 dark:text-gray-300">
-            {!modelStatus.isReady ? (
-              "FunASR服务器启动中，请稍候..."
+            {modelStatus.stage === 'need_download' ? (
+              "需要下载AI模型文件才能开始使用"
+            ) : modelStatus.stage === 'downloading' ? (
+              `正在下载模型文件... ${modelStatus.downloadProgress || 0}%`
+            ) : modelStatus.stage === 'loading' ? (
+              "模型加载中，请稍候..."
+            ) : modelStatus.stage === 'error' ? (
+              `模型错误: ${modelStatus.error}`
+            ) : !modelStatus.isReady ? (
+              "模型未就绪，请稍候..."
             ) : micState === "recording" ? (
               "正在录音，再次点击停止"
             ) : micState === "processing" ? (
@@ -1207,6 +1254,16 @@ export default function App() {
             )}
           </p>
         </div>
+
+        {/* 模型下载进度显示 */}
+        {(modelStatus.stage === 'need_download' || modelStatus.stage === 'downloading') && (
+          <div className="mb-6">
+            <ModelDownloadProgress
+              modelStatus={modelStatus}
+              onDownload={handleDownloadModels}
+            />
+          </div>
+        )}
 
         {/* 文本显示区域 - 可滚动 */}
         <div className="flex-1 text-area-scroll">

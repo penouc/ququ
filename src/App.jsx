@@ -8,6 +8,7 @@ import { useRecording } from "./hooks/useRecording";
 import { useTextProcessing } from "./hooks/useTextProcessing";
 import { useModelStatus } from "./hooks/useModelStatus";
 import { usePermissions } from "./hooks/usePermissions";
+import { useShortcuts } from "./hooks/useShortcuts";
 import { Mic, MicOff, Settings, History, Copy, Download } from "lucide-react";
 import SettingsPanel from "./components/SettingsPanel";
 
@@ -21,9 +22,7 @@ const SoundWaveIcon = ({ size = 16, isActive = false }) => {
       {[...Array(4)].map((_, i) => (
         <div
           key={i}
-          className={`bg-slate-600 dark:bg-gray-300 rounded-full transition-all duration-150 shadow-sm ${
-            isActive ? "wave-bar" : ""
-          }`}
+          className={`bg-slate-600 dark:bg-gray-300 rounded-full transition-all duration-150 shadow-sm ${isActive ? "wave-bar" : ""}`}
           style={{
             width: size * 0.15,
             height: isActive ? size * 0.8 : size * 0.4,
@@ -61,9 +60,7 @@ const VoiceWaveIndicator = ({ isListening }) => {
       {[...Array(4)].map((_, i) => (
         <div
           key={i}
-          className={`w-0.5 bg-white rounded-full transition-all duration-150 drop-shadow-sm ${
-            isListening ? "animate-pulse h-5" : "h-2"
-          }`}
+          className={`w-0.5 bg-white rounded-full transition-all duration-150 drop-shadow-sm ${isListening ? "animate-pulse h-5" : "h-2"}`}
           style={{
             animationDelay: isListening ? `${i * 0.1}s` : "0s",
             animationDuration: isListening ? `${0.6 + i * 0.1}s` : "0s",
@@ -407,38 +404,256 @@ export default function App() {
   }, [modelStatus.isReady, modelStatus.isLoading, modelStatus.error, isRecording, isRecordingProcessing, startRecording, stopRecording]);
 
   // 使用热键Hook，不再使用F2双击功能
-  const { hotkey, syncRecordingState, registerHotkey } = useHotkey();
+  const { hotkey, syncRecordingState, registerHotkey, unregisterHotkey } = useHotkey();
+
+  // 使用快捷键Hook
+  const { shortcuts, matchesShortcut, resetShortcuts } = useShortcuts();
+
+  // 临时：在开发时重置快捷键（清除可能的错误数据）
+  useEffect(() => {
+    // 如果localStorage中有无效数据，自动重置
+    const saved = localStorage.getItem('ququ-shortcuts');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (!parsed.recordingShortcut || !Array.isArray(parsed.recordingShortcut)) {
+          console.log('检测到无效的快捷键数据，自动重置');
+          resetShortcuts();
+        }
+      } catch (error) {
+        console.log('解析快捷键数据失败，自动重置');
+        resetShortcuts();
+      }
+    }
+  }, [resetShortcuts]);
+
+  // 格式化快捷键显示
+  const formatShortcutDisplay = (keys) => {
+    console.log('原始快捷键数据:', keys, typeof keys);
+
+    // 如果没有快捷键或无效，返回默认值
+    if (!keys) {
+      return "⌘ + ⇧ + Space";
+    }
+
+    // 如果是字符串，转换为数组
+    if (typeof keys === 'string') {
+      keys = [keys];
+    }
+
+    // 如果不是数组或数组为空，返回默认值
+    if (!Array.isArray(keys) || keys.length === 0) {
+      return "⌘ + ⇧ + Space";
+    }
+
+    console.log('处理后的快捷键数组:', keys);
+
+    const formatted = keys.map(key => {
+      // 处理双击快捷键
+      if (typeof key === 'string' && key.includes('(双击)')) {
+        const baseKey = key.replace(' (双击)', '');
+        const formattedBase = formatSingleKey(baseKey);
+        return formattedBase + " (双击)";
+      }
+
+      return formatSingleKey(key);
+    }).join(" + ");
+
+    console.log('格式化结果:', formatted);
+    return formatted;
+  };
+
+  const formatSingleKey = (key) => {
+    if (!key) return "";
+
+    const keyStr = String(key).trim();
+
+    switch (keyStr) {
+      case "Cmd":
+      case "Meta":
+        return "⌘";
+      case "Ctrl":
+        return "⌃";
+      case "Alt":
+        return "⌥";
+      case "Shift":
+        return "⇧";
+      case "Space":
+        return "Space";
+      case "Enter":
+        return "↩";
+      case "Tab":
+        return "⇥";
+      case "Escape":
+        return "⎋";
+      case "Backspace":
+        return "⌫";
+      case "Delete":
+        return "⌦";
+      case "ArrowUp":
+        return "↑";
+      case "ArrowDown":
+        return "↓";
+      case "ArrowLeft":
+        return "←";
+      case "ArrowRight":
+        return "→";
+      // 数字键直接显示数字
+      case "1":
+      case "2":
+      case "3":
+      case "4":
+      case "5":
+      case "6":
+      case "7":
+      case "8":
+      case "9":
+      case "0":
+        return keyStr;
+      // 字母键保持大写
+      default:
+        // 如果是单个字母，转为大写
+        if (keyStr.length === 1 && keyStr >= 'a' && keyStr <= 'z') {
+          return keyStr.toUpperCase();
+        }
+        // 其他情况保持原样
+        return keyStr;
+    }
+  };
+
+  // 调试快捷键数据
+  console.log('快捷键数据:', shortcuts);
+
+  const displayShortcut = formatShortcutDisplay(shortcuts.recordingShortcut);
+  console.log('App.jsx - 当前快捷键数据和显示:', {
+    recordingShortcut: shortcuts.recordingShortcut,
+    displayShortcut: displayShortcut
+  });
+
+  // 转换快捷键格式：从localStorage格式转为Electron格式
+  const convertShortcutToElectronFormat = (shortcutArray) => {
+    console.log('转换快捷键格式，原始数据:', shortcutArray);
+    if (!shortcutArray || !Array.isArray(shortcutArray) || shortcutArray.length === 0) {
+      return 'CommandOrControl+Shift+Space'; // 默认快捷键
+    }
+
+    // 处理双击快捷键
+    if (shortcutArray.length === 1 && shortcutArray[0].includes('(双击)')) {
+      // 双击快捷键在Electron中无法直接支持，回退到默认快捷键
+      console.log('双击快捷键不支持全局注册，使用默认快捷键');
+      return 'CommandOrControl+Shift+Space';
+    }
+
+    const electronKeys = shortcutArray.map(key => {
+      switch (key) {
+        case 'Cmd':
+        case 'Meta':
+          return 'CommandOrControl';
+        case 'Ctrl':
+          return 'Control';
+        case 'Alt':
+          return 'Alt';
+        case 'Shift':
+          return 'Shift';
+        case 'Space':
+          return 'Space';
+        case 'Enter':
+          return 'Enter';
+        case 'Escape':
+          return 'Escape';
+        case 'Tab':
+          return 'Tab';
+        case 'Backspace':
+          return 'Backspace';
+        case 'Delete':
+          return 'Delete';
+        case 'ArrowUp':
+          return 'Up';
+        case 'ArrowDown':
+          return 'Down';
+        case 'ArrowLeft':
+          return 'Left';
+        case 'ArrowRight':
+          return 'Right';
+        case '`':
+          return '`';
+        case '-':
+          return '-';
+        case '=':
+          return '=';
+        case '[':
+          return '[';
+        case ']':
+          return ']';
+        case '\\':
+          return '\\';
+        case ';':
+          return ';';
+        case "'":
+          return "'";
+        case ',':
+          return ',';
+        case '.':
+          return '.';
+        case '/':
+          return '/';
+        case 'Plus':
+          return 'Plus';
+        default:
+          // For F1-F12, A-Z, 0-9, they should be passed as is.
+          if (/^F([1-9]|1[0-2])$/.test(key) || /^[A-Z0-9]$/.test(key)) {
+            return key;
+          }
+          console.warn(`Unhandled key in convertShortcutToElectronFormat: ${key}`);
+          return key;
+      }
+    });
+
+    const electronShortcut = electronKeys.join('+');
+    console.log('快捷键格式转换:', {
+      原始格式: shortcutArray,
+      Electron格式: electronShortcut
+    });
+
+    return electronShortcut;
+  };
 
   // 注册传统热键监听 - 只在主窗口注册，避免重复
   useEffect(() => {
     // 检查是否为控制面板窗口
     const urlParams = new URLSearchParams(window.location.search);
     const isControlPanel = urlParams.get('panel') === 'control';
-    
+
     // 只有主窗口才注册热键
     if (isControlPanel) {
       console.log('控制面板窗口，跳过热键注册');
       return;
     }
 
-    const initializeHotkey = async () => {
+    if (!registerHotkey || !unregisterHotkey) {
+      console.log('热键管理函数未准备好，跳过注册');
+      return;
+    }
+
+    const updateHotkey = async () => {
       try {
-        // 注册默认热键 CommandOrControl+Shift+Space
-        const success = await registerHotkey('CommandOrControl+Shift+Space');
+        // 根据当前快捷键设置注册全局热键
+        const electronShortcut = convertShortcutToElectronFormat(shortcuts.recordingShortcut);
+
+        // 注册新的快捷键
+        const success = await registerHotkey(electronShortcut);
         if (success) {
-          console.log('主窗口热键注册成功');
+          console.log('主窗口热键注册成功:', electronShortcut);
         } else {
-          console.error('主窗口热键注册失败');
+          console.error('主窗口热键注册失败:', electronShortcut);
         }
       } catch (error) {
-        console.error('主窗口热键注册异常:', error);
+        console.error('主窗口热键更新异常:', error);
       }
     };
 
-    if (registerHotkey) {
-      initializeHotkey();
-    }
-  }, [registerHotkey]);
+    updateHotkey();
+  }, [registerHotkey, unregisterHotkey, shortcuts.recordingShortcut]); // 依赖快捷键变化
 
   // 处理关闭窗口
   const handleClose = () => {
@@ -486,7 +701,7 @@ export default function App() {
         if (unsubscribeHotkey) unsubscribeHotkey();
         if (unsubscribeToggle) unsubscribeToggle();
       };
-    }
+    } // else: Web environment, no electronAPI
   }, [toggleRecording, isRecording, isRecordingProcessing]);
 
   // 同步录音状态到热键管理器
@@ -496,17 +711,332 @@ export default function App() {
     }
   }, [isRecording, syncRecordingState]);
 
-  // 监听键盘事件
+  // 监听键盘事件和自定义快捷键
   useEffect(() => {
-    const handleKeyPress = (e) => {
+    let lastKeyTime = 0;
+    let doubleClickTimer = null;
+
+    const handleKeyDown = (e) => {
       if (e.key === "Escape") {
         handleClose();
+        return;
+      }
+
+      // 如果没有设置快捷键，使用默认的 Cmd+Shift+Space
+      const recordingShortcut = shortcuts.recordingShortcut || ["Cmd", "Shift", "Space"];
+      const recordingMode = shortcuts.recordingMode || "toggle";
+
+      // 构建当前按键组合
+      const currentKeys = [];
+      if (e.ctrlKey || e.metaKey) currentKeys.push(e.metaKey ? "Cmd" : "Ctrl");
+      if (e.altKey) currentKeys.push("Alt");
+      if (e.shiftKey) currentKeys.push("Shift");
+
+      // 忽略单独的修饰键
+      if (["Control", "Alt", "Shift", "Meta", "Command"].includes(e.key)) {
+        return;
+      }
+
+      // 使用与RecordingShortcutCard相同的键映射逻辑
+      let displayKey;
+      const code = e.code;
+
+      console.log('App.jsx 按键详情:', {
+        key: e.key,
+        code: e.code,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey
+      });
+
+      // 对于数字键，使用 code 来避免被修饰键影响
+      if (code.startsWith('Digit')) {
+        displayKey = code.replace('Digit', ''); // Digit1 -> 1
+        console.log('数字键处理:', { code, displayKey });
+      }
+      // 对于字母键，使用 code 来获取物理位置
+      else if (code.startsWith('Key')) {
+        displayKey = code.replace('Key', ''); // KeyA -> A
+      }
+      // 对于功能键
+      else if (code.startsWith('F') && code.length <= 3) {
+        displayKey = code; // F1, F2, etc.
+      }
+      // 特殊键的映射
+      else {
+        switch (code) {
+          case 'Space':
+            displayKey = 'Space';
+            break;
+          case 'Enter':
+            displayKey = 'Enter';
+            break;
+          case 'Tab':
+            displayKey = 'Tab';
+            break;
+          case 'Escape':
+            displayKey = 'Escape';
+            break;
+          case 'Backspace':
+            displayKey = 'Backspace';
+            break;
+          case 'Delete':
+            displayKey = 'Delete';
+            break;
+          case 'ArrowUp':
+            displayKey = 'ArrowUp';
+            break;
+          case 'ArrowDown':
+            displayKey = 'ArrowDown';
+            break;
+          case 'ArrowLeft':
+            displayKey = 'ArrowLeft';
+            break;
+          case 'ArrowRight':
+            displayKey = 'ArrowRight';
+            break;
+          // 符号键也用 code，避免被 Shift 影响
+          case 'Semicolon':
+            displayKey = ';';
+            break;
+          case 'Equal':
+            displayKey = '=';
+            break;
+          case 'Comma':
+            displayKey = ',';
+            break;
+          case 'Minus':
+            displayKey = '-';
+            break;
+          case 'Period':
+            displayKey = '.';
+            break;
+          case 'Slash':
+            displayKey = '/';
+            break;
+          case 'Backquote':
+            displayKey = '`';
+            break;
+          case 'BracketLeft':
+            displayKey = '[';
+            break;
+          case 'Backslash':
+            displayKey = '\\';
+            break;
+          case 'BracketRight':
+            displayKey = ']';
+            break;
+          case 'Quote':
+            displayKey = "'";
+            break;
+          default:
+            // 如果 code 无法识别，优先保持物理键信息
+            // 对于修饰符组合，不应该使用被修饰后的字符
+            if (e.ctrlKey || e.metaKey || e.altKey) {
+              // 如果有修饰符，尝试从code中提取基本信息
+              if (code && code !== e.key) {
+                displayKey = code; // 保持code原样，避免被修饰符影响
+                console.log('修饰符组合，使用code:', { code, key: e.key, displayKey });
+              } else {
+                displayKey = e.key;
+                console.log('修饰符组合，使用key:', { code, key: e.key, displayKey });
+              }
+            } else {
+              // 没有修饰符时，可以安全地使用key
+              displayKey = e.key;
+              console.log('无修饰符，使用key:', { code, key: e.key, displayKey });
+            }
+        }
+      }
+
+      const fullKeys = [...currentKeys, displayKey];
+      const currentTime = Date.now();
+
+      // 检查是否匹配录音快捷键
+      console.log('快捷键匹配检查:', {
+        当前按键: fullKeys,
+        录音快捷键: recordingShortcut,
+        匹配结果: 'calculating...'
+      });
+
+      const shortcutMatches = matchesShortcut(fullKeys, recordingShortcut);
+
+      console.log('快捷键匹配结果:', {
+        当前按键: fullKeys,
+        录音快捷键: recordingShortcut,
+        匹配结果: shortcutMatches
+      });
+
+      // 处理双击快捷键
+      if (recordingShortcut.length === 1 && recordingShortcut[0].includes('(双击)')) {
+        const baseKey = recordingShortcut[0].replace(' (双击)', '');
+        if (fullKeys.length === 1 && fullKeys[0] === baseKey) {
+          const timeDiff = currentTime - lastKeyTime;
+          if (lastKeyTime > 0 && timeDiff < 400) {
+            e.preventDefault();
+            e.stopPropagation();
+            handleShortcutTrigger(recordingMode);
+            clearTimeout(doubleClickTimer);
+            lastKeyTime = 0;
+            return;
+          }
+          lastKeyTime = currentTime;
+          doubleClickTimer = setTimeout(() => {
+            lastKeyTime = 0;
+          }, 500);
+        }
+      } else if (shortcutMatches) {
+        // 处理普通快捷键
+        e.preventDefault();
+        e.stopPropagation();
+        handleShortcutTrigger(recordingMode);
+        return;
       }
     };
 
-    document.addEventListener("keydown", handleKeyPress);
-    return () => document.removeEventListener("keydown", handleKeyPress);
-  }, []);
+    const handleShortcutTrigger = (mode) => {
+      console.log('快捷键触发，模式:', mode, '当前状态:', { isRecording, isRecordingProcessing });
+
+      switch (mode) {
+        case "toggle":
+        case "hold_or_toggle":
+          // 切换模式：开始录音或停止录音
+          toggleRecording();
+          break;
+        case "hold":
+          // 按住模式：只在没有录音时开始录音
+          if (!isRecording && !isRecordingProcessing) {
+            startRecording();
+          }
+          break;
+        case "double_click":
+          // 双击模式：切换录音状态
+          toggleRecording();
+          break;
+        default:
+          toggleRecording();
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      // 只有在"按住"模式下才处理 keyup 事件
+      if (shortcuts.recordingMode === "hold" && isRecording) {
+        const recordingShortcut = shortcuts.recordingShortcut || ["Cmd", "Shift", "Space"];
+
+        // 构建当前按键组合
+        const currentKeys = [];
+        if (e.ctrlKey || e.metaKey) currentKeys.push(e.metaKey ? "Cmd" : "Ctrl");
+        if (e.altKey) currentKeys.push("Alt");
+        if (e.shiftKey) currentKeys.push("Shift");
+
+        // 使用与keydown相同的键映射逻辑
+        let displayKey;
+        const code = e.code;
+
+        // 对于数字键，使用 code 来避免被修饰键影响
+        if (code.startsWith('Digit')) {
+          displayKey = code.replace('Digit', ''); // Digit1 -> 1
+        }
+        // 对于字母键，使用 code 来获取物理位置
+        else if (code.startsWith('Key')) {
+          displayKey = code.replace('Key', ''); // KeyA -> A
+        }
+        // 对于功能键
+        else if (code.startsWith('F') && code.length <= 3) {
+          displayKey = code; // F1, F2, etc.
+        }
+        // 特殊键的映射
+        else {
+          switch (code) {
+            case 'Space':
+              displayKey = 'Space';
+              break;
+            case 'Enter':
+              displayKey = 'Enter';
+              break;
+            case 'Tab':
+              displayKey = 'Tab';
+              break;
+            case 'Escape':
+              displayKey = 'Escape';
+              break;
+            case 'Backspace':
+              displayKey = 'Backspace';
+              break;
+            case 'Delete':
+              displayKey = 'Delete';
+              break;
+            case 'ArrowUp':
+              displayKey = 'ArrowUp';
+              break;
+            case 'ArrowDown':
+              displayKey = 'ArrowDown';
+              break;
+            case 'ArrowLeft':
+              displayKey = 'ArrowLeft';
+              break;
+            case 'ArrowRight':
+              displayKey = 'ArrowRight';
+              break;
+            // 符号键也用 code，避免被 Shift 影响
+            case 'Semicolon':
+              displayKey = ';';
+              break;
+            case 'Equal':
+              displayKey = '=';
+              break;
+            case 'Comma':
+              displayKey = ',';
+              break;
+            case 'Minus':
+              displayKey = '-';
+              break;
+            case 'Period':
+              displayKey = '.';
+              break;
+            case 'Slash':
+              displayKey = '/';
+              break;
+            case 'Backquote':
+              displayKey = '`';
+              break;
+            case 'BracketLeft':
+              displayKey = '[';
+              break;
+            case 'Backslash':
+              displayKey = '\\';
+              break;
+            case 'BracketRight':
+              displayKey = ']';
+              break;
+            case 'Quote':
+              displayKey = "'";
+              break;
+            default:
+              // 如果 code 无法识别，回退到 key，但保持原样
+              displayKey = e.key;
+          }
+        }
+
+        const fullKeys = [...currentKeys, displayKey];
+
+        // 如果松开的键是快捷键的一部分，停止录音
+        if (recordingShortcut.some(key => fullKeys.includes(key) || key === displayKey)) {
+          console.log('按住模式：松开快捷键，停止录音');
+          stopRecording();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
+      if (doubleClickTimer) clearTimeout(doubleClickTimer);
+    };
+  }, [shortcuts, matchesShortcut, isRecording, isRecordingProcessing, toggleRecording, startRecording, stopRecording]);
 
   // 错误处理
   useEffect(() => {
@@ -554,13 +1084,13 @@ export default function App() {
       case "idle":
         return {
           className: `${buttonStyle} cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始录音`,
+          tooltip: `按 ${displayShortcut} 开始录音`,
           disabled: false
         };
       case "hover":
         return {
           className: `${buttonStyle} scale-105 shadow-2xl cursor-pointer`,
-          tooltip: `按 [${hotkey}] 开始录音`,
+          tooltip: `按 ${displayShortcut} 开始录音`,
           disabled: false
         };
       case "recording":
@@ -673,7 +1203,7 @@ export default function App() {
             ) : micState === "optimizing" ? (
               "AI正在优化文本，请稍候..."
             ) : (
-              `点击麦克风或按 ${hotkey} 开始录音`
+              `点击麦克风或按 ${displayShortcut} 开始录音`
             )}
           </p>
         </div>

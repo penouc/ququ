@@ -2,9 +2,11 @@ import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import "./index.css";
 import { toast, Toaster } from "sonner";
-import { Settings, Save, Eye, EyeOff, X, Loader2, TestTube, CheckCircle, XCircle, Mic, Shield } from "lucide-react";
+import { Settings, Save, Eye, EyeOff, X, Loader2, TestTube, CheckCircle, XCircle, Mic, Shield, Keyboard } from "lucide-react";
 import { usePermissions } from "./hooks/usePermissions";
+import { useShortcuts } from "./hooks/useShortcuts";
 import PermissionCard from "./components/ui/permission-card";
+import RecordingShortcutCard from "./components/ui/recording-shortcut-card";
 
 const SettingsPage = () => {
   const [settings, setSettings] = useState({
@@ -36,6 +38,30 @@ const SettingsPage = () => {
     requestMicPermission,
     testAccessibilityPermission,
   } = usePermissions(showAlert);
+
+  // 快捷键管理
+  const {
+    shortcuts,
+    setRecordingShortcut,
+    setRecordingMode,
+    removeRecordingShortcut,
+  } = useShortcuts();
+
+  // 获取模式描述
+  const getModeDescription = (mode) => {
+    switch (mode) {
+      // case "hold_or_toggle":
+      //   return "按住或切换（自动检测）";
+      case "toggle":
+        return "切换（点击开始/停止）";
+      // case "hold":
+      //   return "按住（按下时录音）";
+      // case "double_click":
+      //   return "双击（快速按两次）";
+      default:
+        return "切换模式";
+    }
+  };
 
   // 加载设置
   useEffect(() => {
@@ -242,6 +268,39 @@ const SettingsPage = () => {
                   buttonText="测试权限"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* 快捷键设置部分 */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 mb-6">
+            <div className="p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 chinese-title">
+                  快捷键设置
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  设置全局快捷键来控制录音功能。支持组合键和双击快捷键。
+                </p>
+              </div>
+
+              <RecordingShortcutCard
+                shortcut={shortcuts.recordingShortcut}
+                activationMode={shortcuts.recordingMode}
+                onShortcutChange={(keys) => {
+                  setRecordingShortcut(keys);
+                  toast.success('快捷键设置成功', {
+                    description: `录音快捷键已自动保存`,
+                    duration: 2000,
+                  });
+                }}
+                onModeChange={(mode) => {
+                  setRecordingMode(mode);
+                  toast.success('激活方式已更新', {
+                    description: `已自动保存为：${getModeDescription(mode)}`,
+                    duration: 2000,
+                  });
+                }}
+              />
             </div>
           </div>
 
@@ -530,6 +589,7 @@ const SettingsPage = () => {
           </div>
         </div>
       </div>
+      <Toaster />
     </div>
   );
 };
